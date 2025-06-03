@@ -1,0 +1,118 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-06-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rhdf5)
+library(Matrix)
+library(Seurat)
+library(SeuratObject)
+
+```
+
+```{r}
+setwd("~/gloria/yap/TotalRNAData.h5")
+list.files()  
+```
+
+
+```{r}
+h5file <-"TotalRNAData.h5"
+h5ls(h5file)
+```
+
+```{r}
+h5file
+```
+
+```{r}
+genes_data <- h5read(h5file, "data/axis0")
+head(genes_data)
+```
+
+```{r}
+cells_data <- h5read(h5file, "data/axis1")
+head(cells_data)
+```
+
+```{r}
+expr_mat<- h5read(h5file, "data/block0_values")
+H5close()
+```
+
+
+```{r}
+rownames(expr_mat) <- genes_data
+colnames(expr_mat) <- cells_data
+rownames(expr_mat) <- gsub("\\..*", "", rownames(expr_mat))
+```
+
+```{r}
+library(biomaRt)
+
+all_names <- rownames(expr_mat)
+is_ens <- grepl("^ENSMUSG", all_names)
+to_map <- all_names[is_ens]
+mouse_ensembl <- useEnsembl(
+  biomart = "genes", 
+  dataset = "mmusculus_gene_ensembl"
+)
+mapping_df <- getBM(
+  attributes = c("ensembl_gene_id", "external_gene_name"),
+  filters    = "ensembl_gene_id",
+  values     = to_map,
+  mart       = mouse_ensembl
+)
+map_vec <- setNames(mapping_df$external_gene_name,
+                    mapping_df$ensembl_gene_id)
+
+not_found <- setdiff(to_map, names(map_vec))
+if (length(not_found) > 0) {
+  map_vec[not_found] <- not_found
+}
+
+new_row_names <- all_names
+new_row_names[is_ens] <- map_vec[ all_names[is_ens] ]
+
+new_row_names <- make.unique(new_row_names)
+
+rownames(expr_mat) <- new_row_names
+
+```
+
+```{r}
+head(rownames(expr_mat)) 
+
+```
+
+
+```{r}
+any(row.names(expr_mat) == 'Dnmt3a_g1')
+any(row.names(expr_mat) == 'Dnmt3a_g2')
+any(row.names(expr_mat) == 'Safe_g1')
+any(row.names(expr_mat) == 'Safe_g2')
+any(row.names(expr_mat) == 'Foxg1_g1')
+any(row.names(expr_mat) == 'Foxg1_g2')
+```
+
+```{r}
+library(Matrix)
+sparse_expr <- Matrix(expr_mat, sparse = TRUE)
+```
+
+
+```{r}
+stats_items <- h5read(h5file, "stats/block0_items")
+stats_items
+```
+
+```{r}
+dim(expr_mat)   # [1] 55542 384
+```
+
