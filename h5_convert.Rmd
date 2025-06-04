@@ -17,19 +17,10 @@ library(SeuratObject)
 ```
 
 ```{r}
-setwd("~/gloria/yap/TotalRNAData.h5")
-list.files()  
-```
-
-
-```{r}
-h5file <-"TotalRNAData.h5"
+h5file <-"~/gloria/yap/TotalRNAData.h5/TotalRNAData.h5"
 h5ls(h5file)
 ```
 
-```{r}
-h5file
-```
 
 ```{r}
 genes_data <- h5read(h5file, "data/axis0")
@@ -48,12 +39,14 @@ H5close()
 
 
 ```{r}
+#remove decimal on ensembl id
 rownames(expr_mat) <- genes_data
 colnames(expr_mat) <- cells_data
 rownames(expr_mat) <- gsub("\\..*", "", rownames(expr_mat))
 ```
 
 ```{r}
+#convert ensembl id to gene symbol
 library(biomaRt)
 
 all_names <- rownames(expr_mat)
@@ -101,18 +94,202 @@ any(row.names(expr_mat) == 'Foxg1_g1')
 any(row.names(expr_mat) == 'Foxg1_g2')
 ```
 
+
 ```{r}
-library(Matrix)
-sparse_expr <- Matrix(expr_mat, sparse = TRUE)
+#import local mapping
+merged_local_mapping$cell_id <- paste(
+  merged_local_mapping$Plate,
+  merged_local_mapping$MultiplexGroup,
+  merged_local_mapping$PCRIndex,
+  merged_local_mapping$RandomIndex,
+  sep = "-"
+)
+```
+
+```{r}
+#find grna rows and replace data from local mapping
+grna_rows <- c("Dnmt3a_g1", "Dnmt3a_g2", "Foxg1_g1", "Foxg1_g2", "Safe_g1", "Safe_g2")
+grna_expr <- t(merged_local_mapping[, grna_rows])
+colnames(grna_expr) <- merged_local_mapping$cell_id
+rownames(grna_expr) <- grna_rows
+```
+
+```{r}
+#put it back 
+common_rows <- intersect(rownames(grna_expr), rownames(expr_mat))
+common_cols <- intersect(colnames(grna_expr), colnames(expr_mat))
+expr_mat[common_rows, common_cols] <- grna_expr[common_rows, common_cols]
+
 ```
 
 
 ```{r}
-stats_items <- h5read(h5file, "stats/block0_items")
-stats_items
+# filter empty rows
+expr_mat <- expr_mat[rownames(expr_mat) != "", ]
+
+```
+
+
+```{r}
+cell_metadata <- merged_local_mapping
+cell_metadata$cell_id <- paste(
+  cell_metadata$Plate,
+  cell_metadata$MultiplexGroup,
+  cell_metadata$PCRIndex,
+  cell_metadata$RandomIndex,
+  sep = "-"
+)
+rownames(cell_metadata) <- cell_metadata$cell_id
+
 ```
 
 ```{r}
-dim(expr_mat)   # [1] 55542 384
+all(colnames(expr_mat) %in% rownames(cell_metadata)) 
+```
+
+```{r}
+library(Seurat)
+
+seurat_obj <- CreateSeuratObject(counts = expr_mat, meta.data = cell_metadata)
+
+```
+
+```{r}
+rownames(seurat_obj)
+```
+
+
+```{r}
+# extract the data frame
+grna_rows <- c("Dnmt3a_g1", "Dnmt3a_g2", "Safe_g1", "Safe_g2")
+grna_expr <- expr_mat[grna_rows, ]
+
+# build gRNA group
+grna_group <- ifelse(
+  grna_expr["Dnmt3a_g1", ] > 0 | grna_expr["Dnmt3a_g2", ] > 0, "Dnmt3a",
+  ifelse(grna_expr["Safe_g1", ] > 0 | grna_expr["Safe_g2", ] > 0, "Safe", NA)
+)
+```
+
+
+```{r}
+# check if exist
+setdiff(grna_rows, rownames(expr_mat))
+
+```
+
+```{r}
+dnmt3a_rows <- intersect(c("Dnmt3a_g1", "Dnmt3a_g2"), rownames(expr_mat))
+safe_rows   <- intersect(c("Safe_g1", "Safe_g2"), rownames(expr_mat))
+
+dnmt3a_signal <- colSums(expr_mat[dnmt3a_rows, , drop = FALSE])
+safe_signal   <- colSums(expr_mat[safe_rows, , drop = FALSE])
+
+grna_group <- ifelse(dnmt3a_signal > 0, "Dnmt3a",
+                     ifelse(safe_signal > 0, "Safe", NA))
+
+```
+
+```{r}
+table(grna_group, useNA = "ifany")
+
+```
+
+```{r}
+library(Seurat)
+
+seurat_obj <- CreateSeuratObject(counts = expr_mat)
+seurat_obj$grna_group <- grna_group[colnames(seurat_obj)]
+
+```
+
+
+```{r}
+head(rownames(seurat_obj[["RNA"]]))
+unique(grep("Dnmt3a", rownames(seurat_obj[["RNA"]]), value = TRUE))
+
+```
+
+```{r}
+grna_rows_seurat <- gsub("_", "-", grna_rows)
+```
+
+```{r}
+setdiff(grna_rows_seurat, rownames(seurat_obj[["RNA"]]))
+```
+
+```{r}
+library(Seurat)
+
+#  gRNA row
+grna_rows <- gsub("_", "-", c("Dnmt3a_g1", "Dnmt3a_g2", "Safe_g1", "Safe_g2"))
+grna_expr <- LayerData(seurat_obj[["RNA"]], layer = "counts")[grna_rows, , drop = FALSE]
+
+dnmt3a_signal <- colSums(grna_expr[c("Dnmt3a-g1", "Dnmt3a-g2"), , drop = FALSE])
+safe_signal   <- colSums(grna_expr[c("Safe-g1", "Safe-g2"), , drop = FALSE])
+
+grna_group <- ifelse(dnmt3a_signal > 0, "Dnmt3a",
+                     ifelse(safe_signal > 0, "Safe", NA))
+seurat_obj$grna_group <- grna_group[colnames(seurat_obj)]
+
+```
+
+
+```{r}
+dim(seurat_filtered)
+rownames(seurat_filtered)
+
+```
+
+
+```{r}
+table(Idents(seurat_filtered), useNA = "ifany")
+
+```
+
+```{r}
+# build metadata
+meta_df <- data.frame(grna_group = grna_group)
+rownames(meta_df) <- colnames(expr_mat)
+seurat_obj <- CreateSeuratObject(counts = expr_mat, meta.data = meta_df)
+
+# Subset keeps features
+seurat_filtered <- subset(
+  seurat_obj,
+  subset = grna_group %in% c("Dnmt3a", "Safe"),
+  features = rownames(seurat_obj)
+)
+
+Idents(seurat_filtered) <- "grna_group"
+
+# Run DEG
+deg <- FindMarkers(seurat_filtered, ident.1 = "Dnmt3a", ident.2 = "Safe")
+head(deg)
+
+
+```
+
+```{r}
+valid_dnmt3a <- intersect(c("Dnmt3a-g1", "Dnmt3a-g2"), rownames(expr_mat))
+valid_safe   <- intersect(c("Safe-g1", "Safe-g2"), rownames(expr_mat))
+valid_dnmt3a
+valid_safe
+```
+
+
+```{r}
+grna_group <- ifelse(dnmt3a_signal > 0, "Dnmt3a",
+                     ifelse(safe_signal > 0, "Safe", NA))
+
+# add metadata
+seurat_obj$grna_group <- grna_group[colnames(seurat_obj)]
+
+# Subset and DEG
+seurat_filtered <- subset(seurat_obj, subset = grna_group %in% c("Dnmt3a", "Safe"))
+Idents(seurat_filtered) <- "grna_group"
+
+deg <- FindMarkers(seurat_filtered, ident.1 = "Dnmt3a", ident.2 = "Safe")
+
+
 ```
 
