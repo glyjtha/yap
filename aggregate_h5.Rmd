@@ -108,9 +108,6 @@ if (length(dupes)) {
 
 ```
 
-```{r}
-expr_mat
-```
 
 ```{r}
 library(Seurat)
@@ -134,25 +131,34 @@ seurat_obj <- CreateSeuratObject(counts = expr_mat)
 ```
 
 
-#################################################need assignment##########################################################
 
-
+############################### still need metadata for split r #################################################
 ```{r}
-metadata_s10 <- read.csv("/gpfs/home/asun/jin_lab/yap/pipeline0_bt2_local_alignment/split_s10/S10_metadata_matrix.csv")
-
 library(dplyr)
 library(glue)
 
-metadata <- metadata %>%
-  mutate(SeuratIndex = glue("S-10-{MultiplexGroup}-A1-{RandomIndex}"))
+metadata_s10 <- read.csv("/gpfs/home/asun/jin_lab/yap/pipeline0_bt2_local_alignment/split_s10/S10_metadata_matrix.csv")
+metadata_s5 <- read.csv("~/gloria/yap/split_s5/S5_metadata_matrix.csv")
+metadata <- bind_rows(
+  mutate(metadata_s10, plate = "S10"),
+  mutate(metadata_s5,  plate = "S5")
+  # , mutate(metadata_r,   plate = "R")
+)
 
+# 4) Construct the SeuratIndex
+metadata <- metadata %>%
+  mutate(SeuratIndex = glue("{plate}-{MultiplexGroup}-A1-{RandomIndex}"))
+
+# 5) Set rownames and inspect assign_ident
 rownames(metadata) <- metadata$SeuratIndex
-metadata["assign_ident"]
+
+# Now you can look at the assign_ident column:
+metadata[ , "assign_ident", drop = FALSE]
 ```
 ```{r}
 seurat_obj
 seurat_obj[["RNA"]]
-#seurat_obj <- AddMetaData(seurat_obj, metadata=metadata)
+#seurat_obj <- AddMetaData(seurat_obj, metadata=metadata) //missing metadata data for split_r
 
 seurat_obj <- NormalizeData(seurat_obj)
 
@@ -278,3 +284,4 @@ genes_to_remove <- c("Dnmt3a-g1","Dnmt3a-g2","Foxg1-g1","Foxg1-g2","Safe-g1","Sa
 # Subset the Seurat object to remove them
 seurat_obj <- subset(seurat_obj, features = setdiff(rownames(seurat_obj), genes_to_remove))
 ```
+
