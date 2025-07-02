@@ -4,16 +4,28 @@ output: html_document
 date: "2025-06-30"
 ---
 
+
+```{r}
+new_mat_lib <- "/usr/local/lib/R/site-library/libs_matrix161"
+.libPaths(c(new_mat_lib, .libPaths()))
+
+# 3) Verify that R now sees v1.6.1 first:
+print(.libPaths())
+print(packageVersion("Matrix"))    # should print ‘1.6.1’
+
+```
+
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
 ```{r}
-library(rhdf5)
 library(Matrix)
-library(Seurat)
+library(rhdf5)
 library(SeuratObject)
+library(Seurat)
 
 ```
 
@@ -23,7 +35,9 @@ plates <- c("r","s5","s10")
 h5_paths <- c(
   r   = "~/gloria/yap/r_TotalRNAData.h5",
   s5  ="~/gloria/yap/s5_TotalRNAData.h5",
-  s10 = "~/gloria/yap/s10_TotalRNAData.h5"
+  s10 = "~/gloria/yap/s10_TotalRNAData.h5",
+  seq1 = "~/gloria/yap/250527_Nextseq/YAP/yap_demultiplex/TotalRNAData.h5"
+  #seq2 = "~/gloria/yap/250425_Nextseq/EckerPipeline_retry/vf_yap_demultiplex/yap_demultiplex/TotalRNAData.h5"
 )
 
 plate_mats <- lapply(h5_paths, function(h5file){
@@ -50,6 +64,7 @@ stopifnot(all(sapply(plate_mats, function(x) all(rownames(x) == rownames(plate_m
 expr_mat <- do.call(cbind, plate_mats)
 
 ```
+
 
 
 ```{r}
@@ -139,26 +154,38 @@ library(glue)
 
 metadata_s10 <- read.csv("/gpfs/home/asun/jin_lab/yap/pipeline0_bt2_local_alignment/split_s10/S10_metadata_matrix.csv")
 metadata_s5 <- read.csv("~/gloria/yap/split_s5/S5_metadata_matrix.csv")
+metadata_r <- read.csv("~/gloria/yap/split_r/R_metadata_matrix.csv")
+metadata_1.2 <- read.csv("~/gloria/yap/nextseq_250527/S1_metadata.csv")
+
 metadata <- bind_rows(
   mutate(metadata_s10, plate = "S10"),
-  mutate(metadata_s5,  plate = "S5")
-  # , mutate(metadata_r,   plate = "R")
+  mutate(metadata_s5,  plate = "S5"),
+  mutate(metadata_r,   plate = "R"),
+  mutate(metadata_1.2, plate ='S1')
 )
 
-# 4) Construct the SeuratIndex
+#Construct the SeuratIndex
 metadata <- metadata %>%
   mutate(SeuratIndex = glue("{plate}-{MultiplexGroup}-A1-{RandomIndex}"))
 
-# 5) Set rownames and inspect assign_ident
+# after you’ve read & glued your metadata…
+metadata <- metadata %>%
+  mutate(
+    SeuratIndex = glue("{plate}-{MultiplexGroup}-A1-{RandomIndex}")
+  )
+
+# set the data.frame rownames from that column
 rownames(metadata) <- metadata$SeuratIndex
 
-# Now you can look at the assign_ident column:
-metadata[ , "assign_ident", drop = FALSE]
+# and drop the SeuratIndex column so you don’t have an extra duplicate
+metadata$SeuratIndex <- NULL
+
 ```
+
 ```{r}
 seurat_obj
 seurat_obj[["RNA"]]
-#seurat_obj <- AddMetaData(seurat_obj, metadata=metadata) //missing metadata data for split_r
+seurat_obj <- AddMetaData(seurat_obj, metadata=metadata) 
 
 seurat_obj <- NormalizeData(seurat_obj)
 
@@ -169,13 +196,23 @@ seurat_obj <- ScaleData(seurat_obj, features = all.genes)
 
 seurat_obj <- RunPCA(seurat_obj, features = VariableFeatures(object = seurat_obj))
 
+```
+
+
+```{r}
 ElbowPlot(seurat_obj, ndims = 30)
 
-DimPlot(seurat_obj, reduction = "pca")
-DimPlot(seurat_obj, reduction = "pca", dims = c(2, 3))
 
 Idents(seurat_obj) <- "assign_ident"
+```
 
+```{r}
+print(table(Idents(seurat_obj)))
+```
+
+
+
+```{r}
 deg_results <- FindMarkers(seurat_obj, ident.1 = "Dnmt3a", ident.2 = "Safe")
 table(Idents(seurat_obj))
 
@@ -187,11 +224,17 @@ deg_results$significant <- with(deg_results,
 genes_of_interest <- rownames(deg_results)
 
 
-"Foxg1" %in% rownames(seurat_obj)
-"Dnmt3a" %in% rownames(seurat_obj)
-"Foxg1" %in% rownames(deg_results)
-"Dnmt3a" %in% rownames(deg_results)
+"Foxg1-g1" %in% rownames(seurat_obj)
+"Dnmt3a-g1" %in% rownames(seurat_obj)
+"Foxg1-g1" %in% rownames(deg_results)
+"Dnmt3a-g1" %in% rownames(deg_results)
+```
+```{r}
+rownames(seurat_obj)
+```
 
+
+```{r}
 library(clusterProfiler)
 library(org.Mm.eg.db)  # Use org.Hs.eg.db for human
 
@@ -215,12 +258,12 @@ barplot(ego, showCategory = 10, font.size = 10)
 
 # Dotplot
 dotplot(ego, showCategory = 10, font.size = 8)
-
+```
 # Enrichment Map
 emapplot(pairwise_termsim(ego))
 
 table(deg_results$significant)
-
+```{r}
 library(ggplot2)
 
 # thresholds
